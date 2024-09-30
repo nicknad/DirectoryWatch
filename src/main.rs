@@ -1,69 +1,75 @@
+use anyhow::{Result, anyhow};
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::io;
 use std::process::Command;
-use std::time::{SystemTime, UNIX_EPOCH};
+use std::time::{SystemTime, Duration};
+use std::thread;
 
-pub fn main() {
+// Expects following input via arguments
+// executable name (rust default)
+// path to directory
+// cmds1..n
+pub fn main() -> Result<()> {
     let args : Vec<String> = env::args().collect();
+
     if args.len() == 1 {
-        panic!("Oh, no! No Arguments given!");
-    }
-
-    let directory = Path::new(&args[1]);
-    // compare time to file metadata and 
-    // if changes occur update time and execute commands from args
-    let mut point_in_time = SystemTime::now();
-    print_time(&point_in_time);
-
-
-    let result = traverse_dir(&directory);
-
-    if !result.is_ok() {
-        panic!("traverse failed")
+        return Err(anyhow!("Oh, no! No arguments given!"));
     }
 
     if args.len() == 2 {
-        panic!("No commands given");
+        return Err(anyhow!("No commands given"));
     }
 
-    for cmd in &args[2..] {
-        if cfg!(target_os = "windows") {
-            Command::new("cmd")
-                .args(["/C", cmd ])
-                .output()
-                .expect("failed to execute process")
-        } else {
-            Command::new("sh")
-                .arg("-c")
-                .arg(cmd)
-                .output()
-                .expect("failed to execute process")
-        };
+    let directory = Path::new(&args[1]);
+    let mut point_in_time = SystemTime::now();
+
+    loop {
+        thread::sleep(Duration::from_millis(500));
+        let files_changed = traverse_dir(&directory, &point_in_time)?; 
+
+        if !files_changed {
+            continue;
+        }
+
+        println!("file changed");
+        point_in_time = SystemTime::now();
+        for cmd in &args[2..] {
+            if cfg!(target_os = "windows") {
+                Command::new("cmd")
+                    .args(["/C", cmd ])
+                    .output()?;
+
+            } else {
+                Command::new("sh")
+                    .arg("-c")
+                    .arg(cmd)
+                    .output()?;
+            };
+        }
     }
-    point_in_time = SystemTime::now();
-    print_time(&point_in_time);
 }
 
-fn print_time(time: &SystemTime) {
-    let since_the_epoch = time.duration_since(UNIX_EPOCH).expect("Time went backwards");
-    let in_ms = since_the_epoch.as_secs() * 1000 +
-            since_the_epoch.subsec_nanos() as u64 / 1_000_000;
-    println!("{:?}", in_ms);
-}
-
-fn traverse_dir(dir: &Path) -> io::Result<()>{
+fn traverse_dir(dir: &Path, curr_time: &SystemTime) -> Result<bool> {
     for entry in fs::read_dir(dir)? {
-
         let entry = entry?;
         let path = entry.path();
         if path.is_dir() {
-            let _ = traverse_dir(&path);
-        } else {
-            println!("{}", path.file_name().unwrap().to_string_lossy().to_string());
+            let has_changed_file = traverse_dir(&path, &curr_time)?;
+
+            if has_changed_file {
+                return Ok(true);
+            }
+
+        } else if path.is_file() {
+
+            let meta = path.metadata()?;
+            let mod_time = meta.modified()?;
+            if mod_time > *curr_time {
+                return Ok(true);
+            }
         }
     }
 
-    Ok(())
+    return Ok(false);
 }
