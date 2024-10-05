@@ -2,7 +2,7 @@ use anyhow::{anyhow, Result};
 use std::env;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
+use std::process::{Command, Output};
 use std::thread;
 use std::time::{Duration, SystemTime};
 
@@ -35,23 +35,42 @@ pub fn main() -> Result<()> {
 
         println!("file changed");
         point_in_time = SystemTime::now();
-        for cmd in &args[2..] {
-            let parts: Vec<&str> = cmd.split(" ").collect();
 
-            if parts.len() == 1 {
-                let output = Command::new(cmd)
-                    .output()
-                    .expect("Failed to execute command!");
-                println!("{:?}", String::from_utf8_lossy(&output.stdout));
-            } else {
-                let output = Command::new(parts[0])
-                    .args(&parts[1..])
-                    .output()
-                    .expect("Failed to execute command!");
-                println!("{:?}", String::from_utf8_lossy(&output.stdout));
-            }
+        if cfg!(target_os = "windows") {
+            execute_on_windows(&args[2..]);
+        } else {
+            execute_on_linux(&args[2..])
         }
+
+
     }
+}
+
+fn execute_on_linux(cmds: &[String]) {
+    for cmd in cmds {
+        let output = Command::new(cmd)
+            .output()
+            .expect("Failed to execute command");
+
+        print_output(output);
+    }
+}
+
+fn execute_on_windows(cmds: &[String]) {
+    for cmd in cmds {
+        let output = Command::new("powershell")
+            .arg("-Command")
+            .arg(cmd)
+            .output()
+            .expect("Failed to execute command");
+
+        print_output(output);
+    }
+}
+
+fn print_output(output: Output) {
+    println!("Standard Output: {}", String::from_utf8_lossy(&output.stdout));
+    println!("Standard Error: {}", String::from_utf8_lossy(&output.stderr));
 }
 
 fn traverse_dir(dir: &Path, point_in_time: &SystemTime) -> Result<bool> {
